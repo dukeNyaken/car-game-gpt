@@ -7,12 +7,14 @@ var capture := false
 var capture_index := 0
 var novice := false
 var cannon := false
+var keep_engine := false
 var window_left := 0.0
 
 func _initialize() -> void:
 	capture = "--capture-route" in OS.get_cmdline_user_args()
 	novice = "--novice" in OS.get_cmdline_user_args()
 	cannon = "--cannon" in OS.get_cmdline_user_args()
+	keep_engine = "--keep-engine" in OS.get_cmdline_user_args()
 	run.call_deferred()
 
 func frame() -> void:
@@ -68,6 +70,9 @@ func snapshot(label: String) -> void:
 	capture_index += 1
 
 func run() -> void:
+	if "--export-check" in OS.get_cmdline_user_args():
+		if ResourceLoader.exists("res://tests/smoke_test.gd") or not FileAccess.file_exists("res://project.binary"):
+			errors.append("Expected exported resources, not the source project")
 	game = Scene.instantiate()
 	root.add_child(game)
 	current_scene = game
@@ -106,29 +111,29 @@ func run() -> void:
 	await snapshot("shield")
 	print("DEFENSE CONNECTED AT: ", game.distance, " window_left=", window_left, " cannon=", cannon, " novice=", novice)
 	await until_distance(1168.0)
-	# Sacrifice speed for steering plus shield during the combined threats.
-	await walk(Vector3(side * 2.1, 3.3, -0.6), true)
-	await walk(Vector3(0, 3.3, 2.0))
-	await use_mount(0)
-	await walk(Vector3(1.8 if cannon else 0.0, 3.3, -1.4))
-	await use_mount(source)
-	await walk(Vector3(1.8, 3.3, 1.45))
-	await use_mount(8)
-	await walk(Vector3(0, 3.3, -2.2))
-	await walk(Vector3(0, 4.2, -3.8), true)
-	await use_mount(1)
-	await snapshot("steering-shield")
+	if not keep_engine:
+		# Sacrifice speed for steering plus shield during the combined threats.
+		await walk(Vector3(side * 2.1, 3.3, -0.6), true)
+		await walk(Vector3(0, 3.3, 2.0))
+		await use_mount(0)
+		await walk(Vector3(1.8 if cannon else 0.0, 3.3, -1.4))
+		await use_mount(source)
+		await walk(Vector3(1.8, 3.3, 1.45))
+		await use_mount(8)
+		await walk(Vector3(0, 3.3, -2.2))
+		await walk(Vector3(0, 4.2, -3.8), true)
+		await use_mount(1)
+		await snapshot("steering-shield")
 	await until_distance(2000.0)
 	if window_left < 2.0:
 		errors.append("Defense window has less than two seconds spare")
 	if game.state != "won":
 		errors.append("Strategy did not reach victory: " + game.state)
-	if game.miss_count != 0 or game.success_count != 8:
+	if game.miss_count != (2 if keep_engine else 0) or game.success_count != (6 if keep_engine else 8):
 		errors.append("Threat results: success=%d missed=%d" % [game.success_count, game.miss_count])
-	print("ROUTE WITH SWAPS: state=", game.state, " successes=", game.success_count, " misses=", game.miss_count, " gap=", game.chase_distance, " actions=", actions)
+	print("ROUTE WITH SWAPS: state=", game.state, " successes=", game.success_count, " misses=", game.miss_count, " gap=", game.chase_distance, " actions=", actions, " seconds=", game.elapsed, " keep_engine=", keep_engine)
 	await snapshot("victory")
-	game.queue_free()
-	await process_frame
+	await dispose_game()
 	# Control run: leaving the initial configuration unchanged must lose.
 	game = Scene.instantiate()
 	root.add_child(game)
@@ -144,9 +149,14 @@ func run() -> void:
 	for error in errors:
 		print("FAIL: ", error)
 	print("FULL ROUTE: ", errors.size(), " failures")
+	await dispose_game()
+	quit(0 if errors.is_empty() else 1)
+
+func dispose_game() -> void:
 	game.sound.stop_all()
 	await process_frame
-	OS.delay_msec(80) # Let the audio mix thread release stopped playback before process shutdown.
+	# Fixed-fps routes outrun the real audio mix thread. Drain it across scene teardown.
+	OS.delay_msec(100)
 	game.queue_free()
 	await process_frame
-	quit(0 if errors.is_empty() else 1)
+	OS.delay_msec(100)
