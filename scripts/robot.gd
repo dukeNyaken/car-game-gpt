@@ -5,6 +5,7 @@ var wheels: Array[MeshInstance3D] = []
 var glow_shield: MeshInstance3D
 var reaction := ""
 var reaction_until := 0.0
+var steering_angle := 0.0
 
 func _ready() -> void:
 	var hull := Color("#4e6973")
@@ -50,8 +51,10 @@ func _ready() -> void:
 	glow_shield.visible = false
 
 func animate(time: float, speed: float, danger: bool, shield: bool) -> void:
-	for wheel in wheels:
+	for index in range(wheels.size()):
+		var wheel := wheels[index]
 		wheel.rotation.x = time * speed * 0.4
+		wheel.rotation.y = steering_angle if index % 2 == 0 else 0.0
 	for eye in eyes:
 		eye.scale.y = 0.2 if fmod(time, 4.8) < 0.13 else (1.4 if danger else 1.0)
 		if time < reaction_until:

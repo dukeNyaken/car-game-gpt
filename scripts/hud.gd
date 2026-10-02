@@ -176,6 +176,8 @@ func _process(delta: float) -> void:
 	var carried := "ничего" if modules.held.is_empty() else String(modules.DEFINITIONS[modules.held].short)
 	power.text = "ПИТАНИЕ  %d / 2\n%s\nВ руках: %s" % [modules.active_count(), modules.active_names(), carried]
 	status.text = ("ТРЕНИРОВКА • без давления" if game.practice else "Путь %d / %d м   •   %d км/ч" % [game.distance, game.ROUTE_LENGTH, game.speed * 3.6])
+	if not game.practice and game.slowdown_timer > 0:
+		status.text += "\nПосле удара: %.1f с" % game.slowdown_timer
 	gap_bar.value = game.chase_distance
 	progress_bar.value = game.distance / game.ROUTE_LENGTH * 100.0
 	prompt_label.text = modules.prompt()

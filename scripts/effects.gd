@@ -39,7 +39,10 @@ func _process(delta: float) -> void:
 		return
 	for index in range(flames.size()):
 		var flame := flames[index]
-		flame.visible = game.state == "running" and game.modules.has_module("flight")
+		flame.visible = game.state == "running" and (game.modules.has_module("flight") or game.emergency_timer > 0)
+		var mat := flame.material_override as StandardMaterial3D
+		mat.albedo_color = Color("#ffb06b") if game.emergency_timer > 0 else Color("#aaaaff")
+		mat.emission = mat.albedo_color
 		flame.scale.y = (1.0 if game.lift > 0.15 else 0.22) * (0.86 + 0.14 * sin(game.elapsed * 35 + index))
 	for index in range(temporary.size() - 1, -1, -1):
 		var effect: Dictionary = temporary[index]

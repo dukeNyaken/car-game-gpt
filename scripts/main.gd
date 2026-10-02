@@ -36,9 +36,16 @@ var test_mode := false
 var sound: Node
 var effects: Node3D
 var radar_timer := 0.0
+var slowdown_timer := 0.0
+var emergency_timer := 0.0
+var launch_height := 4.0
+var road_offset := 0.0
+var skid_timer := 0.0
 
 func _ready() -> void:
 	_setup_input()
+	get_window().min_size = Vector2i(960, 540)
+	get_window().focus_exited.connect(_on_window_focus_exited)
 	if "--mute" in OS.get_cmdline_user_args():
 		Sound.muted = true
 	sound = Sound.new()
@@ -160,9 +167,8 @@ func _make_events() -> void:
 			Geo.box(marker, Vector3(7.5, 1.7, 0), Vector3(0.16, 3.4, 0.16), color)
 			Geo.label(marker, Vector3(0, 4.0, 0), event.title, color, 55)
 		if kind == "hole":
-			for side in [-1.0, 1.0]:
-				var hole := Geo.cylinder(marker, Vector3(side * 2.0, 0.04, 0), 1.55, 0.04, Color("#151b25"))
-				hole.scale.z = 1.5
+			var hole := Geo.cylinder(marker, Vector3(-2.0, 0.04, 0), 1.55, 0.04, Color("#151b25"))
+			hole.scale.z = 1.5
 		event_markers.append({"node": marker, "at": event.at})
 
 func start_run(training: bool = false) -> void:
@@ -197,12 +203,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				hud.show_feedback("Звук выключен • M — включить" if muted else "Звук включён • M — выключить")
 			KEY_ESCAPE:
 				if state == "running":
-					state = "paused"
-					sound.set_running(false)
-					player.enabled = false
-					modules.enabled = false
-					Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-					hud.show_menu("paused")
+					pause_game()
 				elif state == "paused":
 					start_run()
 			KEY_R:
@@ -217,10 +218,19 @@ func advance(delta: float) -> void:
 	elapsed += delta
 	_tick_radar(delta)
 	sound.update_engine(modules.has_module("engine"), speed)
-	speed = move_toward(speed, 17.0 if modules.has_module("engine") else 10.0, delta * 3.0)
+	slowdown_timer = maxf(0.0, slowdown_timer - delta)
+	emergency_timer = maxf(0.0, emergency_timer - delta)
+	skid_timer = maxf(0.0, skid_timer - delta)
+	var target_speed := 17.0 if modules.has_module("engine") else 10.0
+	if slowdown_timer > 0:
+		target_speed *= 0.48
+	speed = move_toward(speed, target_speed, delta * (9.0 if slowdown_timer > 0 else 3.0))
 	if not practice:
 		distance += speed * delta
-		chase_distance = clampf(chase_distance + (0.45 if modules.has_module("engine") else -0.72) * delta, 0, 150)
+		var chase_gain := 0.45 if modules.has_module("engine") else -0.72
+		if slowdown_timer > 0:
+			chase_gain -= 1.2
+		chase_distance = clampf(chase_distance + chase_gain * delta, 0, 150)
 		for event: Dictionary in events:
 			if not event.resolved and distance >= float(event.at):
 				event.resolved = true
@@ -231,9 +241,7 @@ func advance(delta: float) -> void:
 			finish(true)
 	lift_timer = maxf(0, lift_timer - delta)
 	shield_flash = maxf(0, shield_flash - delta)
-	var before_gap: bool = not practice and distance > 935 and distance < 990 and modules.has_module("flight")
-	lift = move_toward(lift, 4.0 if before_gap or lift_timer > 0 else 0.0, delta * 5.0)
-	scenery.position.y = -lift
+	_update_motion(delta)
 	robot.animate(elapsed, speed, chase_distance < 40, shield_flash > 0)
 	_update_scenery()
 
@@ -246,10 +254,12 @@ func resolve_event(kind: String) -> bool:
 			success = modules.has_module("steering") or modules.has_module("flight")
 			if modules.has_module("flight"):
 				lift_timer = 0.65
+				launch_height = 1.8
 		"gap":
 			success = modules.has_module("flight")
 			if success:
 				lift_timer = 2.0
+				launch_height = 4.0
 		"missile":
 			success = modules.has_module("shield") or modules.has_module("cannon")
 			if modules.has_module("cannon"):
@@ -270,6 +280,14 @@ func resolve_event(kind: String) -> bool:
 		hud.show_feedback(message)
 	else:
 		robot.react("hurt", elapsed)
+		slowdown_timer = 3.2
+		if kind == "turn":
+			skid_timer = 2.0
+		if kind == "gap":
+			emergency_timer = 1.6
+			lift_timer = 1.6
+			launch_height = 3.2
+			sound.play_cue("rescue")
 		sound.play_cue("hurt")
 		effects.burst(Vector3(0, 3.7, 2.5), Color("#f4a576"))
 		miss_count += 1
@@ -385,3 +403,49 @@ func _process(delta: float) -> void:
 	if state == "won" or state == "lost":
 		elapsed += delta
 		robot.animate(elapsed, 0.0, state == "lost", false)
+
+
+func pause_game() -> void:
+	if state != "running":
+		return
+	state = "paused"
+	sound.set_running(false)
+	player.enabled = false
+	modules.enabled = false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	hud.show_menu("paused")
+
+func _on_window_focus_exited() -> void:
+	if test_mode or state != "running":
+		return
+	# Releasing actions prevents a key held during Alt-Tab from sticking on return.
+	for action: String in ["forward", "back", "left", "right", "jump", "interact"]:
+		Input.action_release(action)
+	pause_game()
+
+func _update_motion(delta: float) -> void:
+	var target_offset := 0.0
+	var target_lift := launch_height if lift_timer > 0 else 0.0
+	var flight: bool = modules.has_module("flight")
+	var steering: bool = modules.has_module("steering")
+	if not practice:
+		for event: Dictionary in events:
+			var remaining := float(event.at) - distance
+			if event.kind == "hole":
+				if steering and not flight and absf(remaining) < 50.0:
+					target_offset = 3.25 * smoothstep(0.0, 1.0, 1.0 - absf(remaining) / 50.0)
+				if flight and remaining > 0 and remaining < 35.0:
+					target_lift = maxf(target_lift, 1.8 * smoothstep(0.0, 1.0, 1.0 - remaining / 35.0))
+			elif event.kind == "turn" and steering and absf(remaining) < 65.0:
+				target_offset = maxf(target_offset, 1.3 * smoothstep(0.0, 1.0, 1.0 - absf(remaining) / 65.0))
+			elif event.kind == "gap" and flight and remaining > 0 and remaining < 70.0:
+				target_lift = maxf(target_lift, 4.0 * smoothstep(0.0, 1.0, 1.0 - remaining / 70.0))
+	if skid_timer > 0:
+		target_offset -= 1.8 * sin((2.0 - skid_timer) * PI / 2.0)
+	road_offset = move_toward(road_offset, target_offset, delta * 3.8)
+	lift = move_toward(lift, target_lift, delta * 5.0)
+	scenery.position = Vector3(-road_offset, -lift, 0)
+	# The world moves relative to the stable riding platform, as in the existing chase.
+	# Only the cosmetic wheel steering changes; walking colliders remain stable.
+	var tangent := atan2(road_x(distance + 4.0) - road_x(distance - 4.0), 8.0)
+	robot.steering_angle = clampf(tangent, -0.35, 0.35) if steering else 0.0
