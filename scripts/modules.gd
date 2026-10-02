@@ -2,6 +2,8 @@ extends Node3D
 ## Physical objects plus hardpoints. Power is derived from occupancy, never cached.
 signal changed
 signal feedback(message: String)
+signal handled(action: String, kind: String, index: int)
+signal rejected
 const Geo = preload("res://scripts/geometry.gd")
 const POWER_LIMIT := 2
 const REACH := 1.85
@@ -18,6 +20,9 @@ var held := ""
 var selected := -1
 var player: CharacterBody3D
 var enabled := false
+var focus_index := -1
+var tutorial_complete := false
+var guide_beacon: MeshInstance3D
 
 func build(actor: CharacterBody3D) -> void:
 	player = actor
@@ -54,13 +59,21 @@ func build(actor: CharacterBody3D) -> void:
 				barrel.rotation.x = PI / 2.0
 	_sync_objects()
 	_refresh_labels()
+	guide_beacon = Geo.cylinder(self, Vector3.ZERO, 0.2, 0.4, Color("#ffe3a3"))
+	(guide_beacon.mesh as CylinderMesh).bottom_radius = 0.0
+	guide_beacon.material_override = Geo.material(Color("#ffe3a3"), 0.7)
+	guide_beacon.visible = false
 
 func _add_mount(kind: String, pos: Vector3, occupant: String) -> void:
 	var node := Node3D.new()
 	add_child(node)
 	node.position = pos
 	var color := Color("#607486") if kind == "storage" else Color(DEFINITIONS[kind].color)
-	var pad := Geo.cylinder(node, Vector3(0, 0.06, 0), 0.56, 0.12, color)
+	var pad: MeshInstance3D
+	if kind == "storage":
+		pad = Geo.box(node, Vector3(0, 0.06, 0), Vector3(1.12, 0.12, 1.0), color)
+	else:
+		pad = Geo.cylinder(node, Vector3(0, 0.06, 0), 0.56, 0.12, color)
 	Geo.box(node, Vector3(0, 0.12, 0), Vector3(0.65, 0.10, 0.65), Color("#16232e"))
 	var label := Geo.label(node, Vector3(0, 1.18, 0), "", color, 24)
 	mounts.append({"kind": kind, "node": node, "pad": pad, "label": label, "occupant": occupant})
@@ -120,7 +133,13 @@ func _process(_delta: float) -> void:
 		var pad: MeshInstance3D = mounts[index].pad
 		pad.scale = Vector3.ONE * (1.18 if index == selected else 1.0)
 		var label: Label3D = mounts[index].label
-		label.modulate.a = 1.0 if index == selected else 0.7
+		var reveal := Input.is_physical_key_pressed(KEY_TAB)
+		label.visible = reveal or index == selected or index == focus_index or (not held.is_empty() and mounts[index].kind == held)
+		label.modulate.a = 1.0 if index == selected or index == focus_index else 0.75
+		label.font_size = 24 if index == selected else 20
+	guide_beacon.visible = enabled and focus_index >= 0
+	if guide_beacon.visible:
+		guide_beacon.position = mounts[focus_index].node.position + Vector3(0, 1.65, 0)
 	if enabled and Input.is_action_just_pressed("interact"):
 		interact(selected)
 	if not held.is_empty():
@@ -150,25 +169,31 @@ func interact(index: int) -> bool:
 	if index < 0 or index >= mounts.size():
 		return false
 	var mount: Dictionary = mounts[index]
-	var target: Vector3 = mount.node.global_position + Vector3(0, 0.55, 0)
+	var action_kind := held
+	var action := "take" if held.is_empty() else ("store" if mount.kind == "storage" else "install")
 	if not in_reach(index):
+		rejected.emit()
 		feedback.emit("Нужно подойти ближе.")
 		return false
 	if held.is_empty():
 		if String(mount.occupant).is_empty():
 			return false
 		held = mount.occupant
+		action_kind = held
 		mounts[index].occupant = ""
 		player.carrying = true
 		feedback.emit("В руках: " + String(DEFINITIONS[held].short))
 	else:
 		if not String(mount.occupant).is_empty():
+			rejected.emit()
 			feedback.emit("Крепление занято. Отнеси предмет в свободный запас.")
 			return false
 		if mount.kind != "storage" and mount.kind != held:
+			rejected.emit()
 			feedback.emit("Модуль не подходит к этому креплению.")
 			return false
 		if mount.kind != "storage" and active_count() >= POWER_LIMIT:
+			rejected.emit()
 			feedback.emit("Оба подключения заняты. Сначала сними активный модуль.")
 			return false
 		mounts[index].occupant = held
@@ -177,6 +202,7 @@ func interact(index: int) -> bool:
 		player.carrying = false
 	_sync_objects()
 	_refresh_labels()
+	handled.emit(action, action_kind, index)
 	changed.emit()
 	return true
 
@@ -213,3 +239,42 @@ func invariants_ok() -> bool:
 		if counts[kind] != 1:
 			return false
 	return active_count() <= POWER_LIMIT
+
+func first_empty_storage() -> int:
+	for index in range(mounts.size()):
+		if mounts[index].kind == "storage" and String(mounts[index].occupant).is_empty():
+			return index
+	return -1
+
+func find_module(kind: String) -> int:
+	for index in range(mounts.size()):
+		if mounts[index].occupant == kind:
+			return index
+	return -1
+
+func guidance(training: bool) -> Dictionary:
+	if training and has_module("shield"):
+		tutorial_complete = true
+	if training and tutorial_complete:
+		return {"text": "Ты освоил подключение! Теперь можно экспериментировать.\nEnter — начать погоню с исходной конфигурацией.", "index": -1}
+	if not held.is_empty():
+		if held == "engine" and training and first_empty_storage() >= 0:
+			return {"text": "2 / 4  Положи двигатель в свободный серый ЗАПАС [E].\nКвадратные крепления не дают питание.", "index": first_empty_storage()}
+		if active_count() >= POWER_LIMIT:
+			return {"text": "Питание занято. Положи предмет в ЗАПАС, затем сними один работающий модуль.", "index": first_empty_storage()}
+		for index in range(mounts.size()):
+			if mounts[index].kind == held and String(mounts[index].occupant).is_empty():
+				var line := "Донеси модуль до подсвеченного круглого подключения [E]."
+				if training and held == "shield":
+					line = "4 / 4  Перепрыгни на правую руку [Пробел]. Подключи щит [E]."
+				return {"text": line, "index": index}
+		return {"text": "Отнеси предмет в свободный ЗАПАС [E].", "index": first_empty_storage()}
+	if training:
+		if has_module("engine") and first_empty_storage() >= 0:
+			return {"text": "1 / 4  Подойди к двигателю сзади. Нажми E, чтобы снять его.\nWASD — идти, мышь — смотреть.", "index": 0}
+		if active_count() >= POWER_LIMIT:
+			for index in range(mounts.size()):
+				if mounts[index].kind != "storage" and not String(mounts[index].occupant).is_empty():
+					return {"text": "Освободи питание: сними один работающий модуль и отнеси его в ЗАПАС.", "index": index}
+		return {"text": "3 / 4  Возьми синий щит из запаса на передней части спины [E].", "index": find_module("shield")}
+	return {"text": "", "index": -1}

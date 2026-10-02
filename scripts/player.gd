@@ -64,12 +64,15 @@ func _ready() -> void:
 			right_hand = limb
 	hand = Node3D.new()
 	model.add_child(hand)
-	hand.position = Vector3(0, 0.96, -0.6)
+	hand.position = Vector3(0.46, 1.04, -0.38)
 	pivot = Node3D.new()
 	get_parent().add_child.call_deferred(pivot)
 	arm = SpringArm3D.new()
 	arm.spring_length = 8.0
-	arm.margin = 0.25
+	arm.margin = 0.20
+	var camera_shape := SphereShape3D.new()
+	camera_shape.radius = 0.28
+	arm.shape = camera_shape
 	arm.collision_mask = 1
 	pivot.add_child(arm)
 	arm.add_excluded_object(get_rid())
@@ -118,6 +121,7 @@ func _physics_process(delta: float) -> void:
 	left_leg.rotation.x = stride
 	right_leg.rotation.x = -stride
 	left_hand.rotation.x = -1.2 if carrying else -stride * 0.7
+	left_hand.rotation.z = 0.9 if carrying else 0.0
 	right_hand.rotation.x = -1.2 if carrying else stride * 0.7
 	if position.y < -2.0 or absf(position.x) > 12.0 or absf(position.z) > 15.0:
 		reset_position()

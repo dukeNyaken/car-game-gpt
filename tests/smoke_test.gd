@@ -159,4 +159,9 @@ func run() -> void:
 	check(game.state == "running" and game.player.enabled and game.modules.enabled, "Escape resumes play")
 
 	print("PROTOTYPE: ", checks, " checks, ", failures.size(), " failures")
+	game.sound.stop_all()
+	await process_frame
+	OS.delay_msec(80) # Let the audio mix thread release stopped playback before process shutdown.
+	game.queue_free()
+	await process_frame
 	quit(0 if failures.is_empty() else 1)

@@ -15,6 +15,9 @@ var explanation: Label
 var start_button: Button
 var practice_button: Button
 var feedback_time := 0.0
+var guide_panel: Panel
+var guide_label: Label
+var mute_label: Label
 
 func build(owner_game: Node3D) -> void:
 	game = owner_game
@@ -47,6 +50,18 @@ func build(owner_game: Node3D) -> void:
 	threat.anchor_right = 0.5
 	threat.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	threat.add_theme_color_override("font_color", Color("#ffd393"))
+	guide_panel = _panel(root, Vector2(-330, 135), Vector2(306, 155))
+	guide_panel.anchor_left = 1.0
+	guide_panel.anchor_right = 1.0
+	_label(guide_panel, Vector2(16, 10), Vector2(274, 24), "ПОМОЩЬ РОБОТУ", 16)
+	guide_label = _label(guide_panel, Vector2(16, 39), Vector2(274, 104), "", 16)
+	guide_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	mute_label = _label(root, Vector2(-300, -42), Vector2(275, 22), "", 13)
+	mute_label.anchor_left = 1.0
+	mute_label.anchor_right = 1.0
+	mute_label.anchor_top = 1.0
+	mute_label.anchor_bottom = 1.0
+	mute_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	var bottom := _panel(root, Vector2(24, -142), Vector2(430, 118))
 	bottom.anchor_top = 1.0
 	bottom.anchor_bottom = 1.0
@@ -64,7 +79,7 @@ func build(owner_game: Node3D) -> void:
 	notice.anchor_bottom = 1.0
 	notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	notice.modulate = Color("#a3ecd1")
-	var controls := _label(root, Vector2(-315, -170), Vector2(290, 77), "WASD — идти   Мышь — камера\nПробел — прыгнуть   E — модуль\nEsc — пауза   R — заново", 14)
+	var controls := _label(root, Vector2(-315, -170), Vector2(290, 77), "WASD — идти   Мышь — камера\nПробел — прыгнуть   E — модуль\nTab — крепления   Esc — пауза", 14)
 	controls.anchor_left = 1.0
 	controls.anchor_right = 1.0
 	controls.anchor_top = 1.0
@@ -138,7 +153,7 @@ func show_menu(state: String) -> void:
 			explanation.text = "Ты на спине своего робота. Он бежит сам — помоги ему уйти от погони.\n\nWASD и мышь — доберись до головы или рук.\nПробел — перепрыгни. E — возьми или поставь модуль.\n\nРаботают только два модуля. Сними один, отнеси в запас и подключи нужный. Руль уже на голове, двигатель сзади. Остальные ждут на спине."
 		"paused":
 			heading.text = "ПЕРЕДЫШКА"
-			explanation.text = "WASD — движение по корпусу\nМышь — обзор; колесо — расстояние камеры\nПробел — прыжок между площадками\nE — взять / установить ближайший модуль\n\nРобот сам применяет подключённые функции.\nR — вернуться к началу."
+			explanation.text = "WASD — движение по корпусу\nМышь — обзор; колесо — расстояние камеры\nПробел — прыжок между площадками\nE — взять / установить ближайший модуль\n\nРобот сам применяет подключённые функции.\nTab — все крепления; M — звук; R — заново."
 		"won":
 			heading.text = "ОТОРВАЛИСЬ!"
 			explanation.text = "Вы добрались до укрытия вместе.\n\nПогоня осталась позади. Робот довольно мигает — кажется, он тоже рад, что вы справились.\n\nЭто первый маршрут. Можно попробовать другой набор модулей."
@@ -165,3 +180,10 @@ func _process(delta: float) -> void:
 	progress_bar.value = game.distance / game.ROUTE_LENGTH * 100.0
 	prompt_label.text = modules.prompt()
 	threat.text = game.warning_text()
+	var hint: Dictionary = modules.guidance(game.practice)
+	modules.focus_index = int(hint.index) if game.state == "running" else -1
+	guide_panel.visible = game.state == "running" and not String(hint.text).is_empty()
+	guide_label.text = hint.text
+	mute_label.text = "M — звук: выкл." if game.sound.muted else "M — звук: вкл."
+	var seconds: float = game.nearest_missile_seconds()
+	threat.modulate = Color("#ffb097") if seconds > 0 and seconds < 6.0 else Color.WHITE

@@ -4,6 +4,8 @@ const Girl = preload("res://scripts/player.gd")
 const Robot = preload("res://scripts/robot.gd")
 const Modules = preload("res://scripts/modules.gd")
 const Hud = preload("res://scripts/hud.gd")
+const Sound = preload("res://scripts/sound.gd")
+const Effects = preload("res://scripts/effects.gd")
 const ROUTE_LENGTH := 2000.0
 const ROAD_STEP := 8.0
 const WARN_DISTANCE := 310.0
@@ -31,9 +33,16 @@ var shield_flash := 0.0
 var success_count := 0
 var miss_count := 0
 var test_mode := false
+var sound: Node
+var effects: Node3D
+var radar_timer := 0.0
 
 func _ready() -> void:
 	_setup_input()
+	if "--mute" in OS.get_cmdline_user_args():
+		Sound.muted = true
+	sound = Sound.new()
+	add_child(sound)
 	_build_world()
 	robot = Robot.new()
 	add_child(robot)
@@ -43,6 +52,11 @@ func _ready() -> void:
 	modules = Modules.new()
 	add_child(modules)
 	modules.build(player)
+	effects = Effects.new()
+	add_child(effects)
+	effects.build(self)
+	modules.handled.connect(_on_module_handled)
+	modules.rejected.connect(func(): sound.play_cue("denied"))
 	hud = Hud.new()
 	add_child(hud)
 	hud.build(self)
@@ -50,6 +64,9 @@ func _ready() -> void:
 	modules.feedback.connect(hud.show_feedback)
 	_make_events()
 	_update_scenery()
+	if get_tree().get_meta("launch_chase", false):
+		get_tree().remove_meta("launch_chase")
+		start_run.call_deferred(false)
 	if "--capture" in OS.get_cmdline_user_args():
 		_capture_demo.call_deferred()
 
@@ -126,7 +143,7 @@ func _make_events() -> void:
 		{"at": 330.0, "kind": "turn", "title": "ПОВОРОТ • нужен руль"},
 		{"at": 650.0, "kind": "hole", "title": "ЯМЫ • руль или турбины"},
 		{"at": 970.0, "kind": "gap", "title": "ОБРЫВ • нужны турбины"},
-		{"at": 1080.0, "kind": "missile", "title": "РАДАР: РАКЕТА • щит или пушка"},
+		{"at": 1160.0, "kind": "missile", "title": "РАДАР: РАКЕТА • щит или пушка"},
 		{"at": 1370.0, "kind": "turn", "title": "ПОВОРОТ • нужен руль"},
 		{"at": 1450.0, "kind": "missile", "title": "РАДАР: РАКЕТА • щит или пушка"},
 		{"at": 1740.0, "kind": "hole", "title": "ЯМЫ • руль или турбины"},
@@ -155,6 +172,7 @@ func start_run(training: bool = false) -> void:
 	if state == "title":
 		practice = training
 	state = "running"
+	sound.set_running(true)
 	player.enabled = true
 	modules.enabled = true
 	hud.overlay.visible = false
@@ -166,14 +184,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_ENTER:
-				if state != "running":
+				if state == "running" and practice:
+					get_tree().set_meta("launch_chase", true)
+					get_tree().reload_current_scene()
+				elif state != "running":
 					start_run()
 			KEY_T:
 				if state == "title":
 					start_run(true)
+			KEY_M:
+				var muted: bool = sound.toggle_mute()
+				hud.show_feedback("Звук выключен • M — включить" if muted else "Звук включён • M — выключить")
 			KEY_ESCAPE:
 				if state == "running":
 					state = "paused"
+					sound.set_running(false)
 					player.enabled = false
 					modules.enabled = false
 					Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -190,6 +215,8 @@ func _physics_process(delta: float) -> void:
 
 func advance(delta: float) -> void:
 	elapsed += delta
+	_tick_radar(delta)
+	sound.update_engine(modules.has_module("engine"), speed)
 	speed = move_toward(speed, 17.0 if modules.has_module("engine") else 10.0, delta * 3.0)
 	if not practice:
 		distance += speed * delta
@@ -217,15 +244,24 @@ func resolve_event(kind: String) -> bool:
 			success = modules.has_module("steering")
 		"hole":
 			success = modules.has_module("steering") or modules.has_module("flight")
+			if modules.has_module("flight"):
+				lift_timer = 0.65
 		"gap":
 			success = modules.has_module("flight")
 			if success:
 				lift_timer = 2.0
 		"missile":
 			success = modules.has_module("shield") or modules.has_module("cannon")
-			if modules.has_module("shield"):
+			if modules.has_module("cannon"):
+				effects.fire(modules.mounts[4].node.global_position + Vector3(0, 0.9, 0), Vector3(0, 5.8, 4.0))
+				sound.play_cue("cannon")
+			elif modules.has_module("shield"):
 				shield_flash = 1.2
+				sound.play_cue("shield")
 	if success:
+		robot.react("happy", elapsed)
+		if kind != "missile":
+			sound.play_cue("happy")
 		success_count += 1
 		chase_distance = minf(150.0, chase_distance + 7.0)
 		var message := "Пронесло! Отличная работа."
@@ -233,6 +269,9 @@ func resolve_event(kind: String) -> bool:
 			message = "Пушка сбила ракету!" if modules.has_module("cannon") else "Щит выдержал удар!"
 		hud.show_feedback(message)
 	else:
+		robot.react("hurt", elapsed)
+		sound.play_cue("hurt")
+		effects.burst(Vector3(0, 3.7, 2.5), Color("#f4a576"))
 		miss_count += 1
 		chase_distance = maxf(0, chase_distance - (65.0 if kind == "gap" else (42.0 if kind == "missile" else 32.0)))
 		hud.show_feedback("Аварийный рывок спас от падения. Погоня совсем близко!" if kind == "gap" else "Удар! Робот замедлился, погоня приблизилась.")
@@ -242,7 +281,7 @@ func warning_text() -> String:
 	if state != "running":
 		return ""
 	if practice:
-		return "ОСВОЙСЯ НА КОРПУСЕ\nE — модуль   •   Пробел — на голову / руки"
+		return "ОСВОЙСЯ НА КОРПУСЕ"
 	var messages := PackedStringArray()
 	for event: Dictionary in events:
 		var remaining := float(event.at) - distance
@@ -290,12 +329,16 @@ func _update_scenery() -> void:
 					break
 
 func _on_rescued() -> void:
+	sound.play_cue("rescue")
+	robot.react("hurt", elapsed)
 	if not practice:
 		chase_distance = maxf(0, chase_distance - 12.0)
 	hud.show_feedback("Робот подхватил тебя! Модуль остался в руках.")
 
 func finish(won: bool) -> void:
 	state = "won" if won else "lost"
+	sound.stop_engine()
+	sound.play_cue("win" if won else "hurt")
 	player.enabled = false
 	modules.enabled = false
 	if not test_mode:
@@ -312,3 +355,33 @@ func _capture_demo() -> void:
 	shot.save_png("res://tests/prototype-overview.png")
 	print("CAPTURE: tests/prototype-overview.png")
 	get_tree().quit()
+
+func _on_module_handled(action: String, _kind: String, _index: int) -> void:
+	var cue := "grab" if action == "take" else action
+	sound.play_cue(cue)
+
+func nearest_missile_seconds() -> float:
+	if practice:
+		return -1.0
+	var result := INF
+	for event: Dictionary in events:
+		if event.kind == "missile" and not event.resolved:
+			var remaining := float(event.at) - distance
+			if remaining > 0 and remaining <= WARN_DISTANCE:
+				result = minf(result, remaining / maxf(speed, 1.0))
+	return -1.0 if is_inf(result) else result
+
+func _tick_radar(delta: float) -> void:
+	var seconds := nearest_missile_seconds()
+	if seconds < 0:
+		radar_timer = 0.0
+		return
+	radar_timer -= delta
+	if radar_timer <= 0:
+		sound.play_cue("radar")
+		radar_timer = clampf(seconds / 6.0, 0.65, 2.3)
+
+func _process(delta: float) -> void:
+	if state == "won" or state == "lost":
+		elapsed += delta
+		robot.animate(elapsed, 0.0, state == "lost", false)
