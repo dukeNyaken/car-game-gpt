@@ -41,6 +41,7 @@ var emergency_timer := 0.0
 var launch_height := 4.0
 var road_offset := 0.0
 var skid_timer := 0.0
+var ending_time := 0.0
 
 func _ready() -> void:
 	_setup_input()
@@ -78,7 +79,7 @@ func _ready() -> void:
 		_capture_demo.call_deferred()
 
 func _setup_input() -> void:
-	var keys := {"forward": KEY_W, "back": KEY_S, "left": KEY_A, "right": KEY_D, "jump": KEY_SPACE, "interact": KEY_E}
+	var keys := {"forward": KEY_W, "back": KEY_S, "left": KEY_A, "right": KEY_D, "jump": KEY_SPACE, "interact": KEY_E, "sit": KEY_F}
 	for action: String in keys:
 		if not InputMap.has_action(action):
 			InputMap.add_action(action)
@@ -100,14 +101,14 @@ func _build_world() -> void:
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color("#b5c9d3")
-	environment.ambient_light_energy = 0.45
-	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	environment.ambient_light_energy = 0.35
+	environment.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.environment = environment
 	add_child(env)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-36, -25, 0)
 	sun.light_color = Color("#ffdec0")
-	sun.light_energy = 0.85
+	sun.light_energy = 0.75
 	sun.shadow_enabled = true
 	add_child(sun)
 	scenery = Node3D.new()
@@ -335,9 +336,9 @@ func _update_scenery() -> void:
 		marker.node.visible = not practice and absf(distance - s) < 340
 	for index in range(pursuers.size()):
 		pursuers[index].position = Vector3((index - 1) * 5.0, 4.0 + sin(elapsed * 2 + index), 15.0 + chase_distance * 0.32 + index * 4)
-		pursuers[index].visible = not practice
+		pursuers[index].visible = not practice and state != "won" and state != "lost"
 	missile.visible = false
-	if not practice:
+	if not practice and state == "running":
 		for event: Dictionary in events:
 			if event.kind == "missile" and not event.resolved:
 				var remaining := float(event.at) - distance
@@ -347,6 +348,8 @@ func _update_scenery() -> void:
 					break
 
 func _on_rescued() -> void:
+	if state != "running":
+		return
 	sound.play_cue("rescue")
 	robot.react("hurt", elapsed)
 	if not practice:
@@ -358,10 +361,17 @@ func finish(won: bool) -> void:
 	sound.stop_engine()
 	sound.play_cue("win" if won else "hurt")
 	player.enabled = false
+	player.play_outcome(won)
 	modules.enabled = false
+	ending_time = 0.0
+	robot.ending = state
+	missile.visible = false
+	for pursuer: Node3D in pursuers:
+		pursuer.visible = false
 	if not test_mode:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	hud.show_menu(state)
+	hud.overlay.visible = false
+	hud.show_feedback("Мы справились, напарник!" if won else "Ничего. Попробуем ещё раз.")
 
 func _capture_demo() -> void:
 	test_mode = true
@@ -402,7 +412,10 @@ func _tick_radar(delta: float) -> void:
 func _process(delta: float) -> void:
 	if state == "won" or state == "lost":
 		elapsed += delta
+		ending_time += delta
 		robot.animate(elapsed, 0.0, state == "lost", false)
+		if ending_time >= 2.6 and not hud.overlay.visible:
+			hud.show_menu(state)
 
 
 func pause_game() -> void:
@@ -419,7 +432,7 @@ func _on_window_focus_exited() -> void:
 	if test_mode or state != "running":
 		return
 	# Releasing actions prevents a key held during Alt-Tab from sticking on return.
-	for action: String in ["forward", "back", "left", "right", "jump", "interact"]:
+	for action: String in ["forward", "back", "left", "right", "jump", "interact", "sit"]:
 		Input.action_release(action)
 	pause_game()
 

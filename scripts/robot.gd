@@ -6,6 +6,8 @@ var glow_shield: MeshInstance3D
 var reaction := ""
 var reaction_until := 0.0
 var steering_angle := 0.0
+var ending := ""
+var brows: Array[MeshInstance3D] = []
 
 func _ready() -> void:
 	var hull := Color("#4e6973")
@@ -30,16 +32,22 @@ func _ready() -> void:
 		var eye := Geo.box(self, Vector3(side * 0.55, 3.68, -5.34), Vector3(0.42, 0.2, 0.05), Color("#7df3d3"))
 		eye.material_override = Geo.material(Color("#7df3d3"), 1.0)
 		eyes.append(eye)
+	# A rear head display lets the girl and chase camera see the companion's response.
+	Geo.box(self, Vector3(0, 3.65, -3.12), Vector3(1.65, 0.5, 0.06), dark)
+	for side in [-1.0, 1.0]:
+		eyes.append(Geo.box(self, Vector3(side * 0.36, 3.66, -3.075), Vector3(0.26, 0.13, 0.03), Color("#7df3d3")))
+		brows.append(Geo.box(self, Vector3(side * 0.36, 3.83, -3.07), Vector3(0.3, 0.035, 0.03), Color("#7df3d3")))
 	# Walking stripes and a small seat imply usable surfaces.
 	for z in [-0.9, -0.25, 0.4, 1.05]:
 		Geo.box(self, Vector3(0, 3.35, z), Vector3(0.6, 0.02, 0.12), Color("#d1d7bd"))
-	Geo.box(self, Vector3(0, 3.4, 1.65), Vector3(0.85, 0.18, 0.5), Color("#bb7548"))
-	Geo.box(self, Vector3(0, 3.62, 1.9), Vector3(0.85, 0.5, 0.15), dark)
+	Geo.box(self, Vector3(0, 3.6, 1.65), Vector3(0.85, 0.18, 0.5), Color("#bb7548"))
+	Geo.box(self, Vector3(0, 3.88, 1.9), Vector3(0.85, 0.5, 0.15), dark)
 	# Back-facing eyes keep the companion expressive from the gameplay camera.
 	Geo.box(self, Vector3(0, 2.65, 3.24), Vector3(1.5, 0.55, 0.05), dark)
 	for side in [-1.0, 1.0]:
 		var eye := Geo.box(self, Vector3(side * 0.35, 2.69, 3.29), Vector3(0.2, 0.15, 0.04), Color("#7df3d3"))
 		eyes.append(eye)
+		brows.append(Geo.box(self, Vector3(side * 0.35, 2.9, 3.3), Vector3(0.3, 0.035, 0.03), Color("#7df3d3")))
 	Geo.label(self, Vector3(0, 4.55, -3.0), "ГОЛОВА ↑  ·  ПРОБЕЛ", Color("#c1ddd2"), 20)
 	glow_shield = Geo.sphere(self, Vector3(0, 2.7, 0), 1.0, Color("#69bafa"))
 	glow_shield.scale = Vector3(5.8, 4.5, 7.0)
@@ -59,6 +67,13 @@ func animate(time: float, speed: float, danger: bool, shield: bool) -> void:
 		eye.scale.y = 0.2 if fmod(time, 4.8) < 0.13 else (1.4 if danger else 1.0)
 		if time < reaction_until:
 			eye.scale.y = 0.45 if reaction == "happy" else 1.65
+		if ending == "won":
+			eye.scale.y = 0.4
+		elif ending == "lost":
+			eye.scale.y = 0.65
+	for index in range(brows.size()):
+		var side := -1.0 if index % 2 == 0 else 1.0
+		brows[index].rotation.z = side * (0.25 if ending == "won" else (-0.3 if ending == "lost" else 0.0))
 	glow_shield.visible = shield
 
 func react(emotion: String, time: float) -> void:

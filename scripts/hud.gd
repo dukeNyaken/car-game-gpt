@@ -18,6 +18,7 @@ var feedback_time := 0.0
 var guide_panel: Panel
 var guide_label: Label
 var mute_label: Label
+var seat_label: Label
 
 func build(owner_game: Node3D) -> void:
 	game = owner_game
@@ -79,6 +80,10 @@ func build(owner_game: Node3D) -> void:
 	notice.anchor_bottom = 1.0
 	notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	notice.modulate = Color("#a3ecd1")
+	seat_label = _label(root, Vector2(24, -175), Vector2(455, 25), "", 16)
+	seat_label.anchor_top = 1.0
+	seat_label.anchor_bottom = 1.0
+	seat_label.modulate = Color("#efc785")
 	var controls := _label(root, Vector2(-315, -170), Vector2(290, 77), "WASD — идти   Мышь — камера\nПробел — прыгнуть   E — модуль\nTab — крепления   Esc — пауза", 14)
 	controls.anchor_left = 1.0
 	controls.anchor_right = 1.0
@@ -153,10 +158,10 @@ func show_menu(state: String) -> void:
 			explanation.text = "Ты на спине своего робота. Он бежит сам — помоги ему уйти от погони.\n\nWASD и мышь — доберись до головы или рук.\nПробел — перепрыгни. E — возьми или поставь модуль.\n\nРаботают только два модуля. Сними один, отнеси в запас и подключи нужный. Руль уже на голове, двигатель сзади. Остальные ждут на спине."
 		"paused":
 			heading.text = "ПЕРЕДЫШКА"
-			explanation.text = "WASD — движение по корпусу\nМышь — обзор; колесо — расстояние камеры\nПробел — прыжок между площадками\nE — взять / установить ближайший модуль\n\nРобот сам применяет подключённые функции.\nTab — все крепления; M — звук; R — заново."
+			explanation.text = "WASD — движение по корпусу\nМышь — обзор; колесо — расстояние камеры\nПробел — прыжок между площадками\nE — взять / установить ближайший модуль\n\nРобот сам применяет подключённые функции.\nF — сесть / встать рядом с сиденьем.\nTab — все крепления; M — звук; R — заново."
 		"won":
 			heading.text = "ОТОРВАЛИСЬ!"
-			explanation.text = "Вы добрались до укрытия вместе.\n\nПогоня осталась позади. Робот довольно мигает — кажется, он тоже рад, что вы справились.\n\nЭто первый маршрут. Можно попробовать другой набор модулей."
+			explanation.text = "Вы добрались до укрытия вместе.\n\nДевушка машет напарнику. Робот щурится от радости — мы справились вместе.\n\nЭто первый маршрут. Можно попробовать другой набор модулей."
 			start_button.text = "ЕЩЁ РАЗ  •  ENTER"
 		"lost":
 			heading.text = "ПОГОНЯ ДОГНАЛА"
@@ -180,7 +185,8 @@ func _process(delta: float) -> void:
 		status.text += "\nПосле удара: %.1f с" % game.slowdown_timer
 	gap_bar.value = game.chase_distance
 	progress_bar.value = game.distance / game.ROUTE_LENGTH * 100.0
-	prompt_label.text = modules.prompt()
+	prompt_label.text = modules.prompt() if game.state == "running" else ""
+	seat_label.text = game.player.seat_prompt() if game.state == "running" else ""
 	threat.text = game.warning_text()
 	var hint: Dictionary = modules.guidance(game.practice)
 	modules.focus_index = int(hint.index) if game.state == "running" else -1

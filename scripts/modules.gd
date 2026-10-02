@@ -181,7 +181,9 @@ func interact(index: int) -> bool:
 		held = mount.occupant
 		action_kind = held
 		mounts[index].occupant = ""
+		player.stand_up()
 		player.carrying = true
+		player._update_pose(0.0)
 		feedback.emit("В руках: " + String(DEFINITIONS[held].short))
 	else:
 		if not String(mount.occupant).is_empty():
